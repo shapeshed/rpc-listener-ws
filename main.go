@@ -1,78 +1,65 @@
+// Package main is the entry point, containing the main function
 package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
+	"strconv"
+
 	rpchttp "github.com/tendermint/tendermint/rpc/client/http"
 )
 
-type TxInfoLog struct {
-	MsgIndex uint64        `json:"msg_index"`
-	Log      string        `json:"log"`
-	Events   []TxInfoEvent `json:"events"`
-}
+const (
+	// RPCEndpoint is the CometBFT (Tendermint) RPC endpoint
+	// RPCEndpoint = "https://rpc.testnet.osmosis.zone:443"
+	RPCEndpoint = "https://rpc.osmosis.zone:443"
 
-type TxInfoAttribute struct {
-	Key   string `json:"key"`
-	Value string `json:"value"`
-}
+	// WsEndpoint is the websocket endpoint, usually `/websocket`
+	WsEndpoint = "/websocket"
 
-type TxInfoEvent struct {
-	Type       string            `json:"type"`
-	Attributes []TxInfoAttribute `json:"attributes"`
-}
+	// Subscriber is an arbitrary string that can be used to manage a subscription
+	Subscriber = "gobot"
+
+	// Query is the query to subscribe to events matching the query
+	//Query = "wasm-apply_funding._contract_address = 'osmo1cnj84q49sp4sd3tsacdw9p4zvyd8y46f2248ndq2edve3fqa8krs9jds9g'"
+	Query = "token_swapped.module = 'gamm'"
+)
 
 func main() {
-	c, err := rpchttp.New("https://rpc.margined.io:443")
+	// Create a new Tendermint RPC client
+	c, err := rpchttp.New(RPCEndpoint, WsEndpoint)
+	c.Start()
 	if err != nil {
 		panic(err)
 	}
 
-	page := 1
-	perPage := 10
+	// Create a context for the subscription
+	ctx := context.Background()
 
-	for {
-		result, err := c.TxSearch(context.Background(),
-			"wasm-apply_funding._contract_address = 'osmo1cnj84q49sp4sd3tsacdw9p4zvyd8y46f2248ndq2edve3fqa8krs9jds9g'", true, &page, &perPage, "asc")
-		if err != nil {
-			panic(err)
-		}
+	// Subscribe to the WebSocket connection
+	eventCh, err := c.Subscribe(ctx, Subscriber, Query)
+	if err != nil {
+		panic(err)
+	}
 
-		for _, tx := range result.Txs {
-			block, err := c.Block(context.Background(), &tx.Height)
+	// Create a goroutine to print events from the channel
+	go func() {
+		for {
+			event := <-eventCh
+			txHeight, err := strconv.ParseInt(event.Events["tx.height"][0], 10, 64)
+			blockInfo, err := c.Block(ctx, &txHeight)
 			if err != nil {
 				panic(err)
 			}
+			fmt.Printf("time: %+v\n", blockInfo.Block.Time)
+			//fmt.Printf("funding_rate: %+v\n", event.Events["wasm-apply_funding.funding_rate"])
+			fmt.Printf("height: %+v\n", txHeight)
+			fmt.Printf("funding_rate: %+v\n", event.Events["token_swapped.tokens_in"])
 
-			rawLogParsed := new([]TxInfoLog)
-			if unmarshalErr := json.Unmarshal([]byte(tx.TxResult.Log), rawLogParsed); unmarshalErr != nil {
-				panic(err)
-			}
-
-			for _, log := range *rawLogParsed {
-				for _, event := range log.Events {
-					if event.Type == "wasm-apply_funding" {
-						for _, attr := range event.Attributes {
-							if attr.Key == "funding_rate" {
-								// Process data to PostgreSQL here, doing an upsert
-								fmt.Printf("Height: %+v\n", tx.Height)
-								fmt.Printf("Time: %+v\n", block.Block.Time)
-								fmt.Printf("Funding Rate: %s\n", attr.Value)
-							}
-						}
-					}
-				}
-			}
-
+			// Insert into database here
 		}
+	}()
 
-		// If there are no more pages, exit the loop
-		if len(result.Txs) < perPage {
-			break
-		}
-
-		// Increment the page number for the next request
-		page++
-	}
+	// Keep the main goroutine running
+	select {}
 }
