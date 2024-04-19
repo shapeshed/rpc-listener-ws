@@ -4,6 +4,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"log"
 	"strconv"
 
 	rpchttp "github.com/tendermint/tendermint/rpc/client/http"
@@ -28,8 +29,11 @@ const (
 func main() {
 	// Create a new Tendermint RPC client
 	c, err := rpchttp.New(RPCEndpoint, WsEndpoint)
-	c.Start()
 	if err != nil {
+		panic(err)
+	}
+
+	if err := c.Start(); err != nil {
 		panic(err)
 	}
 
@@ -46,11 +50,19 @@ func main() {
 	go func() {
 		for {
 			event := <-eventCh
+			// Parse the transaction height from the event.
 			txHeight, err := strconv.ParseInt(event.Events["tx.height"][0], 10, 64)
+			if err != nil {
+				log.Fatalf("Error parsing transaction height: %v", err)
+			}
+
+			// Retrieve block information using the parsed transaction height.
 			blockInfo, err := c.Block(ctx, &txHeight)
 			if err != nil {
-				panic(err)
+				// Handle error, for example, log and continue/return.
+				log.Fatalf("Error retrieving block information: %v", err)
 			}
+
 			fmt.Printf("time: %+v\n", blockInfo.Block.Time)
 			//fmt.Printf("funding_rate: %+v\n", event.Events["wasm-apply_funding.funding_rate"])
 			fmt.Printf("height: %+v\n", txHeight)
