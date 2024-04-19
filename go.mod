@@ -1,6 +1,6 @@
 module github.com/shapeshed/rpc-listener-ws
 
-go 1.21.3
+go 1.22
 
 require github.com/tendermint/tendermint v0.37.0-rc2
 
